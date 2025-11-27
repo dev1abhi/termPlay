@@ -1,26 +1,18 @@
 #!/usr/bin/env python3
 """
-Sixel Image/Video Viewer for Terminal
-Displays images and videos using SIXEL graphics protocol.
-Requires a SIXEL-compatible terminal (e.g., Windows Terminal, mlterm, xterm with sixel support, mintty, WezTerm)
+TermPlay - SIXEL Image/Video Viewer for Terminal
+Core functionality for displaying images, GIFs, and videos using SIXEL graphics protocol.
 """
 
-import argparse
 import sys
 import os
-import io
 import time
 from pathlib import Path
 
 # Set OpenCV environment variables BEFORE importing cv2
-# This fixes issues with videos that have multiple streams (audio + video)
 os.environ['OPENCV_FFMPEG_READ_ATTEMPTS'] = '100000'
 
-try:
-    from PIL import Image
-except ImportError:
-    print("Error: Pillow is required. Install it with: pip install Pillow")
-    sys.exit(1)
+from PIL import Image
 
 
 def image_to_sixel_fast(image: Image.Image, max_width: int = 800, max_height: int = 600, colors: int = 64) -> str:
@@ -130,7 +122,6 @@ def image_to_sixel(image: Image.Image, max_width: int = 800, max_height: int = 6
     
     # Convert to RGB if necessary
     if image.mode == 'RGBA':
-        # Create white background for transparency
         background = Image.new('RGB', image.size, (0, 0, 0))
         background.paste(image, mask=image.split()[3])
         image = background
@@ -146,15 +137,10 @@ def image_to_sixel(image: Image.Image, max_width: int = 800, max_height: int = 6
     
     # Build SIXEL output
     sixel_output = []
-    
-    # SIXEL escape sequence start
-    # DCS q - Device Control String for SIXEL
     sixel_output.append("\033Pq")
-    
-    # Set raster attributes: Pan;Pad;Ph;Pv (aspect ratio and size)
     sixel_output.append(f'"1;1;{width};{height}')
     
-    # Define color palette - get actual number of colors in palette
+    # Define color palette
     num_palette_colors = len(palette) // 3 if palette else 0
     actual_colors = min(colors, 256, num_palette_colors)
     
@@ -166,7 +152,6 @@ def image_to_sixel(image: Image.Image, max_width: int = 800, max_height: int = 6
             sixel_output.append(f"#{i};2;{r};{g};{b}")
     
     # Convert pixels to SIXEL data
-    # SIXEL encodes 6 vertical pixels at a time
     for y_base in range(0, height, 6):
         line_data = {}
         
@@ -185,11 +170,9 @@ def image_to_sixel(image: Image.Image, max_width: int = 800, max_height: int = 6
                         line_data[color] = ['?'] * width
                     line_data[color][x] = chr(63 + sixel_char)
         
-        # Output each color's data for this row
         for color, chars in line_data.items():
             sixel_output.append(f"#{color}")
             
-            # Run-length encode the output
             result = []
             i = 0
             while i < len(chars):
@@ -205,13 +188,11 @@ def image_to_sixel(image: Image.Image, max_width: int = 800, max_height: int = 6
                 i += count
             
             sixel_output.append(''.join(result))
-            sixel_output.append("$")  # Carriage return (go back to left)
+            sixel_output.append("$")
         
-        sixel_output.append("-")  # Line feed (move down 6 pixels)
+        sixel_output.append("-")
     
-    # SIXEL escape sequence end
     sixel_output.append("\033\\")
-    
     return ''.join(sixel_output)
 
 
@@ -224,7 +205,7 @@ def display_image(image_path: str, max_width: int = 800, max_height: int = 600, 
             sixel_data = image_to_sixel(img, max_width, max_height, colors)
             sys.stdout.write(sixel_data)
             sys.stdout.flush()
-            print()  # New line after image
+            print()
     except FileNotFoundError:
         print(f"Error: File not found: {image_path}")
         sys.exit(1)
@@ -265,15 +246,40 @@ def display_video(video_path: str, max_width: int = 320, max_height: int = 240,
         _play_video_cv2(video_path, max_width, max_height, fps, colors, loop)
 
 
+def _get_ffplay_path():
+    """Get the path to ffplay, using imageio-ffmpeg's bundled ffmpeg if available."""
+    import shutil
+    
+    # First try system ffplay
+    if shutil.which('ffplay'):
+        return 'ffplay'
+    
+    # Try to get ffmpeg from imageio-ffmpeg and derive ffplay path
+    try:
+        import imageio_ffmpeg
+        ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+        # ffplay is usually in the same directory as ffmpeg
+        import os
+        ffmpeg_dir = os.path.dirname(ffmpeg_path)
+        ffplay_candidates = [
+            os.path.join(ffmpeg_dir, 'ffplay'),
+            os.path.join(ffmpeg_dir, 'ffplay.exe'),
+        ]
+        for candidate in ffplay_candidates:
+            if os.path.exists(candidate):
+                return candidate
+    except ImportError:
+        pass
+    
+    return None
+
+
 def _play_video_pyav(video_path: str, max_width: int, max_height: int,
                      fps: float, colors: int, loop: bool):
     """Play video using PyAV with audio support and A/V sync."""
     import av
     import subprocess
     
-    # fps=None means use video's native FPS
-    
-    # Open and get video info
     container = av.open(video_path)
     video_stream = None
     has_audio = False
@@ -290,13 +296,11 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
         sys.exit(1)
     
     video_fps = float(video_stream.average_rate) if video_stream.average_rate else 30
-    total_frames = video_stream.frames or 0
     if video_stream.duration and video_stream.time_base:
         duration = float(video_stream.duration * video_stream.time_base)
     else:
         duration = 0
     
-    # Use video's native FPS if user didn't specify, otherwise use user's fps
     effective_fps = fps if fps is not None else video_fps
     
     print(f"Playing: {video_path}")
@@ -310,46 +314,42 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
     
     container.close()
     
-    # Start audio playback in background using ffplay (comes with ffmpeg)
     if has_audio:
-        try:
-            audio_process = subprocess.Popen(
-                ['ffplay', '-nodisp', '-autoexit', '-loglevel', 'quiet', video_path],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-        except FileNotFoundError:
-            print("Note: ffplay not found. Install ffmpeg for audio playback.")
+        ffplay_path = _get_ffplay_path()
+        if ffplay_path:
+            try:
+                audio_process = subprocess.Popen(
+                    [ffplay_path, '-nodisp', '-autoexit', '-loglevel', 'quiet', video_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            except Exception:
+                print("Note: Could not start audio playback.")
+                has_audio = False
+        else:
+            print("Note: ffplay not found. Audio disabled.")
             has_audio = False
     
-    # Pre-calculate target size
     container = av.open(video_path)
     stream = container.streams.video[0]
     orig_width = stream.width
     orig_height = stream.height
     
-    # Calculate target dimensions once
     scale = min(max_width / orig_width, max_height / orig_height, 1.0)
     target_width = int(orig_width * scale)
     target_height = int(orig_height * scale)
     
-    # Frame skip ratio - skip frames if we can't keep up
     frame_skip = max(1, int(video_fps / effective_fps))
     
     container.close()
     
-    # Calculate how many terminal lines the frame will use
-    # SIXEL uses approximately 1 terminal line per 20 pixels of height
     frame_terminal_lines = (target_height // 16) + 2
     
-    # Reserve space by printing newlines, then move back up
-    # This ensures scroll happens BEFORE we start, not during playback
     sys.stdout.write("\n" * frame_terminal_lines)
     sys.stdout.write(f"\033[{frame_terminal_lines}A")
-    sys.stdout.write("\033[s")  # Save cursor at this safe position
+    sys.stdout.write("\033[s")
     sys.stdout.flush()
     
-    # Track timing for A/V sync
     playback_start = time.perf_counter()
     
     try:
@@ -363,28 +363,22 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
             for frame in container.decode(stream):
                 frame_index += 1
                 
-                # Skip frames to maintain sync
                 if frame_index % frame_skip != 0:
                     continue
                 
-                # Calculate expected time for this frame based on audio
                 expected_time = frame_count / effective_fps
                 actual_time = time.perf_counter() - playback_start
                 
-                # If we're behind, skip this frame
                 if actual_time > expected_time + 0.1:
                     frame_count += 1
                     continue
                 
-                # Restore cursor and clear below for each frame
                 sys.stdout.write("\033[u\033[J")
                 
-                # Convert to PIL Image with pre-calculated size
                 pil_image = frame.to_image()
                 if pil_image.size != (target_width, target_height):
                     pil_image = pil_image.resize((target_width, target_height), Image.Resampling.NEAREST)
                 
-                # Generate SIXEL (fast path for video)
                 sixel_data = image_to_sixel_fast(pil_image, max_width, max_height, colors)
                 
                 sys.stdout.write(sixel_data)
@@ -392,7 +386,6 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
                 
                 frame_count += 1
                 
-                # Sleep to sync with audio
                 expected_next = (frame_count) / effective_fps
                 actual_now = time.perf_counter() - playback_start
                 sleep_time = expected_next - actual_now
@@ -405,7 +398,6 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
             if not loop:
                 break
             
-            # Reset timing for loop
             playback_start = time.perf_counter()
             frame_count = 0
                 
@@ -438,11 +430,9 @@ def _play_video_cv2(video_path: str, max_width: int, max_height: int,
         print(f"Error: Could not open video: {video_path}")
         sys.exit(1)
     
-    # Get video properties
     video_fps = cap.get(cv2.CAP_PROP_FPS)
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
-    # Use video's native FPS if user didn't specify
     effective_fps = fps if fps is not None else video_fps
     if effective_fps <= 0:
         effective_fps = 30
@@ -466,22 +456,16 @@ def _play_video_cv2(video_path: str, max_width: int, max_height: int,
                 else:
                     break
             
-            # Move cursor up to overwrite previous frame
             if last_height_lines > 0:
                 sys.stdout.write(f"\033[{last_height_lines}A")
             
-            # Convert BGR to RGB
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
-            # Convert to PIL Image
             pil_image = Image.fromarray(frame_rgb)
             pil_image.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
             
-            # Calculate how many terminal lines this image will take
             img_height = pil_image.size[1]
             last_height_lines = (img_height // 15) + 1
             
-            # Generate SIXEL
             sixel_data = image_to_sixel(pil_image, max_width, max_height, colors)
             
             sys.stdout.write(sixel_data)
@@ -509,7 +493,6 @@ def display_gif(gif_path: str, max_width: int = 400, max_height: int = 300,
         sys.exit(1)
     
     if not getattr(img, 'is_animated', False):
-        # Static image, just display it
         display_image(gif_path, max_width, max_height, colors)
         return
     
@@ -518,38 +501,30 @@ def display_gif(gif_path: str, max_width: int = 400, max_height: int = 300,
     print(f"Settings: {max_width}x{max_height}, {colors} colors{', loop' if loop else ''}")
     print("Pre-processing frames...")
     
-    # Pre-process all frames for faster playback
     frames = []
     durations = []
     
     for frame_num in range(img.n_frames):
         img.seek(frame_num)
-        
-        # Get frame duration (in milliseconds)
         duration = img.info.get('duration', 100) / 1000.0
         durations.append(duration)
         
-        # Convert frame to RGB and resize
         frame = img.convert('RGB')
         frame.thumbnail((max_width, max_height), Image.Resampling.NEAREST)
         
-        # Pre-generate SIXEL data
         sixel_data = image_to_sixel_fast(frame, max_width, max_height, colors)
         frames.append(sixel_data)
     
     print(f"Ready! Press Ctrl+C to stop")
     
-    # Get frame dimensions for space reservation
     img.seek(0)
     thumb = img.convert('RGB')
     thumb.thumbnail((max_width, max_height), Image.Resampling.NEAREST)
     frame_terminal_lines = (thumb.size[1] // 16) + 2
     
-    # Reserve space by printing newlines, then move back up
-    # This ensures scroll happens BEFORE we start, not during playback
     sys.stdout.write("\n" * frame_terminal_lines)
     sys.stdout.write(f"\033[{frame_terminal_lines}A")
-    sys.stdout.write("\033[s")  # Save cursor at this safe position
+    sys.stdout.write("\033[s")
     sys.stdout.flush()
     
     try:
@@ -557,13 +532,10 @@ def display_gif(gif_path: str, max_width: int = 400, max_height: int = 300,
             for i, sixel_data in enumerate(frames):
                 start_time = time.perf_counter()
                 
-                # Restore cursor and clear below for each frame
                 sys.stdout.write("\033[u\033[J")
-                
                 sys.stdout.write(sixel_data)
                 sys.stdout.flush()
                 
-                # Account for processing time
                 elapsed = time.perf_counter() - start_time
                 sleep_time = durations[i] - elapsed
                 if sleep_time > 0:
@@ -604,17 +576,14 @@ def save_as_sixel(image_path: str, output_path: str = None, max_width: int = 800
 
 def check_sixel_support():
     """Check if terminal supports SIXEL (basic check)."""
-    # This is a simple heuristic - proper detection requires terminal queries
     term = os.environ.get('TERM', '')
     term_program = os.environ.get('TERM_PROGRAM', '')
-    wt_session = os.environ.get('WT_SESSION', '')  # Windows Terminal sets this
+    wt_session = os.environ.get('WT_SESSION', '')
     
-    # Windows Terminal now supports SIXEL
     if wt_session:
-        return  # Windows Terminal detected, SIXEL supported
+        return True
     
     sixel_terms = ['mlterm', 'xterm-256color', 'mintty', 'wezterm', 'contour', 'windows-terminal']
-    
     supported = any(t in term.lower() or t in term_program.lower() for t in sixel_terms)
     
     if not supported:
@@ -622,6 +591,8 @@ def check_sixel_support():
         print(f"TERM={term}, TERM_PROGRAM={term_program}")
         print("Supported terminals: Windows Terminal, mlterm, xterm (with sixel), mintty, WezTerm, Contour")
         print("Continuing anyway...\n")
+    
+    return supported
 
 
 def get_file_type(filepath: str) -> str:
@@ -640,96 +611,3 @@ def get_file_type(filepath: str) -> str:
         return 'gif'
     else:
         return 'unknown'
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description='Display images and videos in terminal using SIXEL graphics',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''
-Examples:
-  %(prog)s image.png                    # Display an image
-  %(prog)s animation.gif --loop         # Play animated GIF in loop
-  %(prog)s video.mp4 --fps 15           # Play video at 15 FPS
-  %(prog)s photo.jpg --width 400        # Display image with max width 400px
-  %(prog)s image.png --save             # Save as .sixel file
-  %(prog)s image.png --save -o out.sixel # Save with custom filename
-
-Supported formats:
-  Images: PNG, JPG, JPEG, BMP, WebP, TIFF, ICO
-  Videos: MP4, AVI, MKV, MOV, WMV, FLV, WebM (requires opencv-python)
-  Animated: GIF
-
-Note: Requires a SIXEL-compatible terminal such as:
-  - Windows Terminal (native support)
-  - mlterm
-  - xterm (compiled with --enable-sixel-graphics)
-  - mintty (Windows)
-  - WezTerm
-  - Contour
-
-Tip: Use --save to create .sixel files, then view with: type filename.sixel
-        '''
-    )
-    
-    parser.add_argument('file', help='Path to image or video file')
-    parser.add_argument('-w', '--width', type=int, default=800,
-                        help='Maximum width in pixels (default: 800)')
-    parser.add_argument('-H', '--height', type=int, default=600,
-                        help='Maximum height in pixels (default: 600)')
-    parser.add_argument('-c', '--colors', type=int, default=256,
-                        help='Number of colors (2-256, default: 256)')
-    parser.add_argument('-f', '--fps', type=float, default=None,
-                        help='Frames per second for video playback (default: native video FPS)')
-    parser.add_argument('-l', '--loop', action='store_true',
-                        help='Loop video/GIF playback')
-    parser.add_argument('-s', '--save', action='store_true',
-                        help='Save as .sixel file instead of displaying')
-    parser.add_argument('-o', '--output', type=str, default=None,
-                        help='Output filename for --save (default: <input>.sixel)')
-    parser.add_argument('--no-check', action='store_true',
-                        help='Skip terminal SIXEL support check')
-    
-    args = parser.parse_args()
-    
-    # Validate arguments
-    if not os.path.exists(args.file):
-        print(f"Error: File not found: {args.file}")
-        sys.exit(1)
-    
-    args.colors = max(2, min(256, args.colors))
-    
-    # Check terminal support
-    if not args.no_check and not args.save:
-        check_sixel_support()
-    
-    # Determine file type and display
-    file_type = get_file_type(args.file)
-    
-    # Save mode
-    if args.save:
-        if file_type == 'video':
-            print("Error: Cannot save video as .sixel file. Only images are supported.")
-            sys.exit(1)
-        save_as_sixel(args.file, args.output, args.width, args.height, args.colors)
-        return
-    
-    if file_type == 'image':
-        display_image(args.file, args.width, args.height, args.colors)
-    elif file_type == 'gif':
-        display_gif(args.file, args.width, args.height, args.colors, args.loop)
-    elif file_type == 'video':
-        # Use smaller size and fewer colors for video performance
-        video_width = min(args.width, 320)
-        video_height = min(args.height, 240)
-        video_colors = min(args.colors, 32)
-        display_video(args.file, video_width, video_height, args.fps, 
-                      video_colors, args.loop)
-    else:
-        # Try as image anyway
-        print(f"Unknown file type, attempting to display as image...")
-        display_image(args.file, args.width, args.height, args.colors)
-
-
-if __name__ == '__main__':
-    main()

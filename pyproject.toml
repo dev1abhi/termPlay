@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "termplay"
+version = "1.0.0"
+description = "Display images, GIFs, and videos in terminal using SIXEL graphics"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "dev1abhi", email = "dev1abhi@users.noreply.github.com"}
+]
+maintainers = [
+    {name = "dev1abhi", email = "dev1abhi@users.noreply.github.com"}
+]
+keywords = [
+    "sixel",
+    "terminal",
+    "image",
+    "video",
+    "gif",
+    "cli",
+    "graphics",
+    "windows-terminal",
+    "console"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Graphics :: Viewers",
+    "Topic :: Multimedia :: Video :: Display",
+    "Topic :: Terminals",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "Pillow>=9.0.0",
+    "av>=10.0.0",
+    "imageio-ffmpeg>=0.4.0",
+]
+
+[project.optional-dependencies]
+opencv = [
+    "opencv-python>=4.5.0",
+]
+all = [
+    "opencv-python>=4.5.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/dev1abhi/termPlay"
+Repository = "https://github.com/dev1abhi/termPlay"
+Issues = "https://github.com/dev1abhi/termPlay/issues"
+
+[project.scripts]
+termplay = "termplay.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["termplay*"]
+
+[tool.setuptools.package-data]
+termplay = ["py.typed"]
