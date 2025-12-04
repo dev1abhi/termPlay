@@ -303,11 +303,15 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
     
     effective_fps = fps if fps is not None else video_fps
     
-    print(f"Playing: {video_path}")
-    print(f"Video FPS: {video_fps:.2f}, Duration: {duration:.1f}s")
-    print(f"Settings: {max_width}x{max_height}, {colors} colors, {effective_fps:.1f} fps{', loop' if loop else ''}")
-    print(f"Audio: {'Yes' if has_audio else 'No'}")
-    print("Press Ctrl+C to stop")
+    # Store info for display
+    info_lines = [
+        f"Playing: {video_path}",
+        f"Video FPS: {video_fps:.2f}, Duration: {duration:.1f}s",
+        f"Settings: {max_width}x{max_height}, {colors} colors, {effective_fps:.1f} fps{', loop' if loop else ''}",
+        f"Audio: {'Yes' if has_audio else 'No'}",
+        "Press Ctrl+C to stop",
+        ""
+    ]
     
     frame_count = 0
     audio_process = None
@@ -343,11 +347,15 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
     
     container.close()
     
-    frame_terminal_lines = (target_height // 16) + 2
+    # Print info before switching to alternate screen
+    for line in info_lines:
+        if line:
+            print(line)
     
-    sys.stdout.write("\n" * frame_terminal_lines)
-    sys.stdout.write(f"\033[{frame_terminal_lines}A")
-    sys.stdout.write("\033[s")
+    # Switch to alternate screen buffer (like vim/less)
+    sys.stdout.write("\033[?1049h")  # Enter alternate screen
+    sys.stdout.write("\033[?25l")    # Hide cursor
+    sys.stdout.write("\033[H")       # Move cursor to home
     sys.stdout.flush()
     
     playback_start = time.perf_counter()
@@ -373,7 +381,8 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
                     frame_count += 1
                     continue
                 
-                sys.stdout.write("\033[u\033[J")
+                # Position cursor at home for each frame (SIXEL overwrites in place)
+                sys.stdout.write("\033[H")
                 
                 pil_image = frame.to_image()
                 if pil_image.size != (target_width, target_height):
@@ -404,8 +413,11 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        print(f"\nError during playback: {e}")
+        pass
     finally:
+        sys.stdout.write("\033[?25h")    # Show cursor
+        sys.stdout.write("\033[?1049l")  # Exit alternate screen (restore main screen)
+        sys.stdout.flush()
         if audio_process:
             audio_process.terminate()
             try:
@@ -416,7 +428,7 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
             container.close()
         except:
             pass
-        print(f"\nPlayback finished. ({frame_count} frames)")
+        print(f"Playback finished. ({frame_count} frames)")
 
 
 def _play_video_cv2(video_path: str, max_width: int, max_height: int,
@@ -437,13 +449,27 @@ def _play_video_cv2(video_path: str, max_width: int, max_height: int,
     if effective_fps <= 0:
         effective_fps = 30
     
-    print(f"Playing: {video_path}")
-    print(f"Video FPS: {video_fps:.2f}, Total frames: {total_frames}")
-    print(f"Settings: {max_width}x{max_height}, {colors} colors, {effective_fps:.1f} fps{', loop' if loop else ''}")
-    print("Press Ctrl+C to stop\n")
+    # Store info for display
+    info_lines = [
+        f"Playing: {video_path}",
+        f"Video FPS: {video_fps:.2f}, Total frames: {total_frames}",
+        f"Settings: {max_width}x{max_height}, {colors} colors, {effective_fps:.1f} fps{', loop' if loop else ''}",
+        "Press Ctrl+C to stop",
+        ""
+    ]
+    
+    # Print info before switching to alternate screen
+    for line in info_lines:
+        if line:
+            print(line)
     
     frame_delay = 1.0 / effective_fps
-    last_height_lines = 0
+    
+    # Switch to alternate screen buffer (like vim/less)
+    sys.stdout.write("\033[?1049h")  # Enter alternate screen
+    sys.stdout.write("\033[?25l")    # Hide cursor
+    sys.stdout.write("\033[H")       # Move cursor to home
+    sys.stdout.flush()
     
     try:
         while True:
@@ -456,28 +482,28 @@ def _play_video_cv2(video_path: str, max_width: int, max_height: int,
                 else:
                     break
             
-            if last_height_lines > 0:
-                sys.stdout.write(f"\033[{last_height_lines}A")
+            # Position cursor at home for each frame (SIXEL overwrites in place)
+            sys.stdout.write("\033[H")
             
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pil_image = Image.fromarray(frame_rgb)
             pil_image.thumbnail((max_width, max_height), Image.Resampling.LANCZOS)
             
-            img_height = pil_image.size[1]
-            last_height_lines = (img_height // 15) + 1
-            
             sixel_data = image_to_sixel(pil_image, max_width, max_height, colors)
             
             sys.stdout.write(sixel_data)
-            sys.stdout.write("\n")
             sys.stdout.flush()
             
             time.sleep(frame_delay)
             
     except KeyboardInterrupt:
-        print("\n\nPlayback stopped.")
+        pass
     finally:
+        sys.stdout.write("\033[?25h")    # Show cursor
+        sys.stdout.write("\033[?1049l")  # Exit alternate screen (restore main screen)
+        sys.stdout.flush()
         cap.release()
+        print("Playback stopped.")
 
 
 def display_gif(gif_path: str, max_width: int = 400, max_height: int = 300, 
@@ -496,9 +522,15 @@ def display_gif(gif_path: str, max_width: int = 400, max_height: int = 300,
         display_image(gif_path, max_width, max_height, colors)
         return
     
-    print(f"Playing animated GIF: {gif_path}")
-    print(f"Frames: {img.n_frames}")
-    print(f"Settings: {max_width}x{max_height}, {colors} colors{', loop' if loop else ''}")
+    # Store info for display
+    info_lines = [
+        f"Playing animated GIF: {gif_path}",
+        f"Frames: {img.n_frames}",
+        f"Settings: {max_width}x{max_height}, {colors} colors{', loop' if loop else ''}",
+        "Press Ctrl+C to stop",
+        ""
+    ]
+    
     print("Pre-processing frames...")
     
     frames = []
@@ -515,16 +547,17 @@ def display_gif(gif_path: str, max_width: int = 400, max_height: int = 300,
         sixel_data = image_to_sixel_fast(frame, max_width, max_height, colors)
         frames.append(sixel_data)
     
-    print(f"Ready! Press Ctrl+C to stop")
+    print(f"Ready!")
     
-    img.seek(0)
-    thumb = img.convert('RGB')
-    thumb.thumbnail((max_width, max_height), Image.Resampling.NEAREST)
-    frame_terminal_lines = (thumb.size[1] // 16) + 2
+    # Print info before switching to alternate screen
+    for line in info_lines:
+        if line:
+            print(line)
     
-    sys.stdout.write("\n" * frame_terminal_lines)
-    sys.stdout.write(f"\033[{frame_terminal_lines}A")
-    sys.stdout.write("\033[s")
+    # Switch to alternate screen buffer (like vim/less)
+    sys.stdout.write("\033[?1049h")  # Enter alternate screen
+    sys.stdout.write("\033[?25l")    # Hide cursor
+    sys.stdout.write("\033[H")       # Move cursor to home
     sys.stdout.flush()
     
     try:
@@ -532,7 +565,8 @@ def display_gif(gif_path: str, max_width: int = 400, max_height: int = 300,
             for i, sixel_data in enumerate(frames):
                 start_time = time.perf_counter()
                 
-                sys.stdout.write("\033[u\033[J")
+                # Position cursor at home for each frame (SIXEL overwrites in place)
+                sys.stdout.write("\033[H")
                 sys.stdout.write(sixel_data)
                 sys.stdout.flush()
                 
@@ -547,7 +581,10 @@ def display_gif(gif_path: str, max_width: int = 400, max_height: int = 300,
     except KeyboardInterrupt:
         pass
     finally:
-        print("\nPlayback stopped.")
+        sys.stdout.write("\033[?25h")    # Show cursor
+        sys.stdout.write("\033[?1049l")  # Exit alternate screen (restore main screen)
+        sys.stdout.flush()
+        print("Playback stopped.")
 
 
 def save_as_sixel(image_path: str, output_path: str = None, max_width: int = 800, 
