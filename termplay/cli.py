@@ -3,6 +3,18 @@
 TermPlay CLI - Command line interface for displaying images and videos in terminal.
 """
 
+def _setup_warnings():
+    """Suppress deprecation warnings before any imports."""
+    import warnings
+    warnings.filterwarnings('ignore', category=DeprecationWarning)
+    warnings.filterwarnings('ignore', message='.*pkg_resources.*')
+    import os
+    os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
+
+# Run setup before any other imports
+_setup_warnings()
+
+
 import argparse
 import sys
 import os

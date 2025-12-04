@@ -7,12 +7,240 @@ Core functionality for displaying images, GIFs, and videos using SIXEL graphics 
 import sys
 import os
 import time
+import threading
+import tempfile
+import subprocess
 from pathlib import Path
 
 # Set OpenCV environment variables BEFORE importing cv2
 os.environ['OPENCV_FFMPEG_READ_ATTEMPTS'] = '100000'
 
+# Suppress pygame welcome message
+os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
+
 from PIL import Image
+
+
+class AudioPlayer:
+    """Audio player with pause/resume support using pygame."""
+    
+    def __init__(self, video_path: str):
+        self.video_path = video_path
+        self.temp_audio = None
+        self.is_initialized = False
+        self.is_paused = False
+        self.is_muted = False
+        self._volume = 1.0
+        self._position = 0  # Track position in seconds
+        self._pause_time = 0
+        
+    def extract_audio(self):
+        """Extract audio from video to a temp file."""
+        try:
+            # Create temp file for audio
+            self.temp_audio = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False)
+            self.temp_audio.close()
+            
+            # Use ffmpeg to extract audio
+            ffmpeg_path = self._get_ffmpeg_path()
+            if not ffmpeg_path:
+                return False
+            
+            result = subprocess.run(
+                [ffmpeg_path, '-i', self.video_path, '-vn', '-acodec', 'libmp3lame', 
+                 '-q:a', '2', '-y', self.temp_audio.name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            
+            if result.returncode != 0:
+                return False
+            
+            return True
+        except Exception:
+            return False
+    
+    def _get_ffmpeg_path(self):
+        """Get ffmpeg path."""
+        import shutil
+        if shutil.which('ffmpeg'):
+            return 'ffmpeg'
+        try:
+            import imageio_ffmpeg
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except ImportError:
+            return None
+    
+    def initialize(self):
+        """Initialize pygame mixer and load audio."""
+        if not self.extract_audio():
+            return False
+        
+        try:
+            import pygame
+            pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
+            pygame.mixer.music.load(self.temp_audio.name)
+            self.is_initialized = True
+            return True
+        except Exception:
+            return False
+    
+    def play(self):
+        """Start playing audio."""
+        if not self.is_initialized:
+            return
+        try:
+            import pygame
+            pygame.mixer.music.play()
+        except:
+            pass
+    
+    def pause(self):
+        """Pause audio playback."""
+        if not self.is_initialized:
+            return
+        try:
+            import pygame
+            pygame.mixer.music.pause()
+            self.is_paused = True
+        except:
+            pass
+    
+    def unpause(self):
+        """Resume audio playback."""
+        if not self.is_initialized:
+            return
+        try:
+            import pygame
+            pygame.mixer.music.unpause()
+            self.is_paused = False
+        except:
+            pass
+    
+    def toggle_pause(self):
+        """Toggle pause state."""
+        if self.is_paused:
+            self.unpause()
+        else:
+            self.pause()
+        return self.is_paused
+    
+    def mute(self):
+        """Mute audio."""
+        if not self.is_initialized:
+            return
+        try:
+            import pygame
+            pygame.mixer.music.set_volume(0)
+            self.is_muted = True
+        except:
+            pass
+    
+    def unmute(self):
+        """Unmute audio."""
+        if not self.is_initialized:
+            return
+        try:
+            import pygame
+            pygame.mixer.music.set_volume(self._volume)
+            self.is_muted = False
+        except:
+            pass
+    
+    def toggle_mute(self):
+        """Toggle mute state."""
+        if self.is_muted:
+            self.unmute()
+        else:
+            self.mute()
+        return self.is_muted
+    
+    def stop(self):
+        """Stop audio and cleanup."""
+        if self.is_initialized:
+            try:
+                import pygame
+                pygame.mixer.music.stop()
+                pygame.mixer.quit()
+            except:
+                pass
+        
+        # Clean up temp file
+        if self.temp_audio:
+            try:
+                os.unlink(self.temp_audio.name)
+            except:
+                pass
+    
+    def is_available(self):
+        """Check if pygame is available."""
+        try:
+            import pygame
+            return True
+        except ImportError:
+            return False
+
+
+# Keyboard input handling for Windows/Unix
+if sys.platform == 'win32':
+    import msvcrt
+    
+    def get_key_non_blocking():
+        """Get a keypress without blocking (Windows)."""
+        if msvcrt.kbhit():
+            key = msvcrt.getch()
+            # Handle special keys (arrows, etc.)
+            if key in (b'\x00', b'\xe0'):
+                key = msvcrt.getch()
+                if key == b'K':  # Left arrow
+                    return 'left'
+                elif key == b'M':  # Right arrow
+                    return 'right'
+                elif key == b'H':  # Up arrow
+                    return 'up'
+                elif key == b'P':  # Down arrow
+                    return 'down'
+                return None
+            try:
+                char = key.decode('utf-8').lower()
+                if char == ' ':
+                    return 'space'
+                elif char == '\x1b':  # Escape
+                    return 'esc'
+                return char
+            except:
+                return None
+        return None
+else:
+    import select
+    import tty
+    import termios
+    
+    def get_key_non_blocking():
+        """Get a keypress without blocking (Unix)."""
+        if select.select([sys.stdin], [], [], 0)[0]:
+            old_settings = termios.tcgetattr(sys.stdin)
+            try:
+                tty.setraw(sys.stdin.fileno())
+                key = sys.stdin.read(1)
+                if key == '\x1b':  # Escape sequence
+                    if select.select([sys.stdin], [], [], 0.1)[0]:
+                        key += sys.stdin.read(2)
+                        if key == '\x1b[D':
+                            return 'left'
+                        elif key == '\x1b[C':
+                            return 'right'
+                        elif key == '\x1b[A':
+                            return 'up'
+                        elif key == '\x1b[B':
+                            return 'down'
+                    return 'esc'
+                elif key == ' ':
+                    return 'space'
+                return key.lower()
+            finally:
+                termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
+        return None
 
 
 def image_to_sixel_fast(image: Image.Image, max_width: int = 800, max_height: int = 600, colors: int = 64) -> str:
@@ -278,7 +506,6 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
                      fps: float, colors: int, loop: bool):
     """Play video using PyAV with audio support and A/V sync."""
     import av
-    import subprocess
     
     container = av.open(video_path)
     video_stream = None
@@ -303,36 +530,37 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
     
     effective_fps = fps if fps is not None else video_fps
     
+    container.close()
+    
+    # Initialize audio player
+    audio_player = None
+    audio_available = False
+    
+    if has_audio:
+        audio_player = AudioPlayer(video_path)
+        if audio_player.is_available():
+            #print("Extracting audio...")
+            if audio_player.initialize():
+                audio_available = True
+            else:
+                print("Note: Could not initialize audio.")
+        else:
+            print("Note: Install pygame for audio support: pip install pygame")
+    
     # Store info for display
     info_lines = [
         f"Playing: {video_path}",
         f"Video FPS: {video_fps:.2f}, Duration: {duration:.1f}s",
         f"Settings: {max_width}x{max_height}, {colors} colors, {effective_fps:.1f} fps{', loop' if loop else ''}",
-        f"Audio: {'Yes' if has_audio else 'No'}",
-        "Press Ctrl+C to stop",
+        f"Audio: {'Yes' if audio_available else 'No'}",
+        "",
+        "Controls: [Space] Pause  [Q/Esc] Quit  [M] Mute",
         ""
     ]
     
     frame_count = 0
-    audio_process = None
-    
-    container.close()
-    
-    if has_audio:
-        ffplay_path = _get_ffplay_path()
-        if ffplay_path:
-            try:
-                audio_process = subprocess.Popen(
-                    [ffplay_path, '-nodisp', '-autoexit', '-loglevel', 'quiet', video_path],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-            except Exception:
-                print("Note: Could not start audio playback.")
-                has_audio = False
-        else:
-            print("Note: ffplay not found. Audio disabled.")
-            has_audio = False
+    is_paused = False
+    is_muted = False
     
     container = av.open(video_path)
     stream = container.streams.video[0]
@@ -358,10 +586,17 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
     sys.stdout.write("\033[H")       # Move cursor to home
     sys.stdout.flush()
     
+    # Start audio playback
+    if audio_available:
+        audio_player.play()
+    
     playback_start = time.perf_counter()
+    pause_start = 0
+    
+    quit_requested = False
     
     try:
-        while True:
+        while not quit_requested:
             container = av.open(video_path)
             stream = container.streams.video[0]
             stream.thread_type = "AUTO"
@@ -369,6 +604,43 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
             frame_index = 0
             
             for frame in container.decode(stream):
+                # Check for keyboard input
+                key = get_key_non_blocking()
+                if key:
+                    if key in ('q', 'esc'):
+                        quit_requested = True
+                        break
+                    elif key == 'space':
+                        is_paused = not is_paused
+                        if audio_available:
+                            audio_player.toggle_pause()
+                        if is_paused:
+                            pause_start = time.perf_counter()
+                    elif key == 'm' and audio_available:
+                        audio_player.toggle_mute()
+                        is_muted = audio_player.is_muted
+                
+                # Handle pause
+                while is_paused and not quit_requested:
+                    key = get_key_non_blocking()
+                    if key == 'space':
+                        is_paused = False
+                        if audio_available:
+                            audio_player.toggle_pause()
+                        # Adjust playback timing to account for pause duration
+                        pause_duration = time.perf_counter() - pause_start
+                        playback_start += pause_duration
+                    elif key in ('q', 'esc'):
+                        quit_requested = True
+                        break
+                    elif key == 'm' and audio_available:
+                        audio_player.toggle_mute()
+                        is_muted = audio_player.is_muted
+                    time.sleep(0.05)
+                
+                if quit_requested:
+                    break
+                
                 frame_index += 1
                 
                 if frame_index % frame_skip != 0:
@@ -395,7 +667,7 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
                 
                 frame_count += 1
                 
-                expected_next = (frame_count) / effective_fps
+                expected_next = frame_count / effective_fps
                 actual_now = time.perf_counter() - playback_start
                 sleep_time = expected_next - actual_now
                 
@@ -404,8 +676,16 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
             
             container.close()
             
-            if not loop:
+            if not loop or quit_requested:
                 break
+            
+            # Restart audio for looping
+            if audio_available:
+                audio_player.stop()
+                audio_player.initialize()
+                audio_player.play()
+                if is_muted:
+                    audio_player.mute()
             
             playback_start = time.perf_counter()
             frame_count = 0
@@ -418,12 +698,8 @@ def _play_video_pyav(video_path: str, max_width: int, max_height: int,
         sys.stdout.write("\033[?25h")    # Show cursor
         sys.stdout.write("\033[?1049l")  # Exit alternate screen (restore main screen)
         sys.stdout.flush()
-        if audio_process:
-            audio_process.terminate()
-            try:
-                audio_process.wait(timeout=1)
-            except:
-                audio_process.kill()
+        if audio_player:
+            audio_player.stop()
         try:
             container.close()
         except:
@@ -454,7 +730,8 @@ def _play_video_cv2(video_path: str, max_width: int, max_height: int,
         f"Playing: {video_path}",
         f"Video FPS: {video_fps:.2f}, Total frames: {total_frames}",
         f"Settings: {max_width}x{max_height}, {colors} colors, {effective_fps:.1f} fps{', loop' if loop else ''}",
-        "Press Ctrl+C to stop",
+        "",
+        "Controls: [Space] Pause  [Q/Esc] Quit",
         ""
     ]
     
@@ -464,6 +741,8 @@ def _play_video_cv2(video_path: str, max_width: int, max_height: int,
             print(line)
     
     frame_delay = 1.0 / effective_fps
+    is_paused = False
+    quit_requested = False
     
     # Switch to alternate screen buffer (like vim/less)
     sys.stdout.write("\033[?1049h")  # Enter alternate screen
@@ -472,7 +751,7 @@ def _play_video_cv2(video_path: str, max_width: int, max_height: int,
     sys.stdout.flush()
     
     try:
-        while True:
+        while not quit_requested:
             ret, frame = cap.read()
             
             if not ret:
@@ -481,6 +760,28 @@ def _play_video_cv2(video_path: str, max_width: int, max_height: int,
                     continue
                 else:
                     break
+            
+            # Check for keyboard input
+            key = get_key_non_blocking()
+            if key:
+                if key in ('q', 'esc'):
+                    quit_requested = True
+                    break
+                elif key == 'space':
+                    is_paused = not is_paused
+            
+            # Handle pause
+            while is_paused and not quit_requested:
+                key = get_key_non_blocking()
+                if key == 'space':
+                    is_paused = False
+                elif key in ('q', 'esc'):
+                    quit_requested = True
+                    break
+                time.sleep(0.05)
+            
+            if quit_requested:
+                break
             
             # Position cursor at home for each frame (SIXEL overwrites in place)
             sys.stdout.write("\033[H")
@@ -527,7 +828,8 @@ def display_gif(gif_path: str, max_width: int = 400, max_height: int = 300,
         f"Playing animated GIF: {gif_path}",
         f"Frames: {img.n_frames}",
         f"Settings: {max_width}x{max_height}, {colors} colors{', loop' if loop else ''}",
-        "Press Ctrl+C to stop",
+        "",
+        "Controls: [Space] Pause  [Q/Esc] Quit",
         ""
     ]
     
@@ -554,6 +856,10 @@ def display_gif(gif_path: str, max_width: int = 400, max_height: int = 300,
         if line:
             print(line)
     
+    # Playback state
+    is_paused = False
+    quit_requested = False
+    
     # Switch to alternate screen buffer (like vim/less)
     sys.stdout.write("\033[?1049h")  # Enter alternate screen
     sys.stdout.write("\033[?25l")    # Hide cursor
@@ -561,8 +867,30 @@ def display_gif(gif_path: str, max_width: int = 400, max_height: int = 300,
     sys.stdout.flush()
     
     try:
-        while True:
+        while not quit_requested:
             for i, sixel_data in enumerate(frames):
+                # Check for keyboard input
+                key = get_key_non_blocking()
+                if key:
+                    if key in ('q', 'esc'):
+                        quit_requested = True
+                        break
+                    elif key == 'space':
+                        is_paused = not is_paused
+                
+                # Handle pause
+                while is_paused and not quit_requested:
+                    key = get_key_non_blocking()
+                    if key == 'space':
+                        is_paused = False
+                    elif key in ('q', 'esc'):
+                        quit_requested = True
+                        break
+                    time.sleep(0.05)
+                
+                if quit_requested:
+                    break
+                
                 start_time = time.perf_counter()
                 
                 # Position cursor at home for each frame (SIXEL overwrites in place)
@@ -575,7 +903,7 @@ def display_gif(gif_path: str, max_width: int = 400, max_height: int = 300,
                 if sleep_time > 0:
                     time.sleep(sleep_time)
             
-            if not loop:
+            if not loop or quit_requested:
                 break
                 
     except KeyboardInterrupt:
