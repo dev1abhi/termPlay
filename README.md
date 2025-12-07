@@ -27,20 +27,6 @@ Display images, GIFs, and videos directly in your terminal using SIXEL graphics!
 
 ## Installation
 
-### From PyPI
-
-```bash
-pip install termplay
-```
-
-This installs everything needed for images and videos, including a bundled FFmpeg.
-
-### With OpenCV fallback (optional)
-
-```bash
-pip install termplay[opencv]
-```
-
 ### From source
 
 ```bash
