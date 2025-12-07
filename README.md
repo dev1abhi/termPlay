@@ -2,7 +2,9 @@
 
 Display images, GIFs, and videos directly in your terminal using SIXEL graphics!
 
-![Demo](https://raw.githubusercontent.com/dev1abhi/termPlay/main/demo.gif)
+## Demo:
+https://github.com/user-attachments/assets/99be5001-88e2-4c0b-940d-5df380b9db34
+
 
 ## Features
 
