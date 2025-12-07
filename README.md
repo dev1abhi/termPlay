@@ -1,4 +1,4 @@
-# TermPlay 🎬
+# TermPlay
 
 Display images, GIFs, and videos directly in your terminal using SIXEL graphics!
 
@@ -6,13 +6,13 @@ Display images, GIFs, and videos directly in your terminal using SIXEL graphics!
 
 ## Features
 
-- 🖼️ **Image Display** - View PNG, JPG, BMP, WebP, TIFF, and more
-- 🎞️ **Animated GIFs** - Play animated GIFs with proper timing
-- 🎬 **Video Playback** - Play MP4, AVI, MKV, MOV, and other video formats
-- 🔊 **Audio Support** - Video audio playback via ffplay (requires FFmpeg)
-- 💾 **Save to SIXEL** - Export images as `.sixel` files
-- ⚡ **Optimized Performance** - Fast SIXEL encoding for smooth video playback
-- 🔄 **Loop Support** - Loop videos and GIFs continuously
+- **Image Display** - View PNG, JPG, BMP, WebP, TIFF, and more
+- **Animated GIFs** - Play animated GIFs with proper timing
+- **Video Playback** - Play MP4, AVI, MKV, MOV, and other video formats
+- **Audio Support** - Video audio playback via ffplay (requires FFmpeg)
+- **Save to SIXEL** - Export images as `.sixel` files
+- **Optimized Performance** - Fast SIXEL encoding for smooth video playback
+- **Loop Support** - Loop videos and GIFs continuously
 
 ## Requirements
 
